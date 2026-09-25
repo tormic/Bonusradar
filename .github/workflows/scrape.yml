@@ -1,0 +1,50 @@
+name: SAS award check
+
+on:
+  schedule:
+    # once a day — matches SEARCH_INTERVAL_SECONDS in the script. A points
+    # calendar doesn't change fast enough to justify checking more often.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}  # lets you trigger a run manually from the Actions tab
+
+jobs:
+  check-availability:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to commit the updated db back to the repo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install aiohttp
+
+      - name: Run one check
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 sas_award_scraper.py --once
+
+      - name: Generate dashboard
+        run: |
+          python3 generate_dashboard.py
+          mkdir -p dist
+          cp index.html dist/
+
+      - name: Publish dashboard to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: dist
+          publish_branch: gh-pages
+
+      - name: Commit updated availability history
+        run: |
+          git config user.name "sas-scraper-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add sas_availability.db
+          git diff --staged --quiet || git commit -m "Update availability snapshot [skip ci]"
+          git push
