@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SAS award dashboard</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --border: #e2e2e0; --text: #1a1a1a;
+    --muted: #777; --green-bg: #e1f5ee; --green-text: #085041;
+    --blue-bg: #e6f1fb; --blue-text: #0c447c; --amber-bg: #faeeda; --amber-text: #854f0b;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: var(--bg); margin: 0; padding: 1.5rem; color: var(--text);
+         max-width: 640px; margin-left: auto; margin-right: auto; }
+  h1 { font-size: 20px; font-weight: 500; margin: 2rem 0 4px; }
+  h1:first-of-type { margin-top: 0; }
+  .updated { color: var(--muted); font-size: 13px; margin-bottom: 1.25rem; }
+  .list { display: flex; flex-direction: column; gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .card h2 { font-size: 17px; margin: 0 0 2px; font-weight: 500; }
+  .route-sub { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .season { font-size: 12px; color: var(--muted); margin-bottom: 8px; line-height: 1.5; }
+  .search-box { width: 100%; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border);
+                font-size: 14px; margin-bottom: 14px; background: #fff; }
+  .trip { border-top: 1px solid #eee; padding: 10px 0; font-size: 13px; }
+  .trip:first-of-type { border-top: none; }
+  .trip-dates { font-weight: 500; }
+  .trip-weekdays { color: var(--muted); font-size: 12px; margin-top: 1px; }
+  .trip-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 6px; margin-right: 4px; margin-top: 4px; }
+  .badge.best { background: var(--green-bg); color: var(--green-text); }
+  .badge.ok { background: var(--blue-bg); color: var(--blue-text); }
+  .badge.feeder-warn { background: var(--amber-bg); color: var(--amber-text); }
+  .badge.hub { background: #eee; color: #444; }
+  .seats { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .none { color: var(--muted); font-size: 13px; }
+  .top-card { border: 1px solid var(--green-bg); }
+  details.dest-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  details.dest-card summary { cursor: pointer; list-style: none; }
+  details.dest-card summary::-webkit-details-marker { display: none; }
+  .dest-summary-line { font-size: 12px; color: var(--green-text); margin-top: 4px; }
+  .hub-block { border-top: 1px solid #eee; margin-top: 12px; padding-top: 10px; }
+  .hub-block h3 { font-size: 13px; margin: 0 0 6px; font-weight: 500; }
+  .confirmed-block { background: var(--green-bg); border-radius: var(--radius); padding: 10px 12px; margin-top: 12px; }
+  .confirmed-block h3 { font-size: 12px; margin: 0 0 6px; font-weight: 500; color: var(--green-text); }
+  .confirmed-group { margin-bottom: 6px; font-size: 12px; }
+  .confirmed-group strong { display: block; margin-bottom: 2px; }
+  .offer-line { color: var(--text); font-size: 12px; line-height: 1.5; }
+  .view-toggle { display: flex; gap: 6px; margin-bottom: 12px; }
+  .view-toggle button { padding: 6px 14px; border-radius: var(--radius); border: 1px solid var(--border);
+                         background: #fff; font-size: 13px; cursor: pointer; }
+  .view-toggle button.active { background: var(--text); color: #fff; border-color: var(--text); }
+  .legend { display: none; gap: 14px; margin: 10px 0; font-size: 12px; color: var(--muted); align-items: center; }
+  .legend .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+</style>
+</head>
+<body>
+
+<div class="updated">Generert 2026-09-25 08:49 UTC · huber: Oslo/København/Stockholm, feeder fra BGO</div>
+
+<h1>Destinasjoner</h1>
+<div class="view-toggle">
+  <button id="viewToggleList" class="active">Liste</button>
+  <button id="viewToggleMap">Kart</button>
+</div>
+<input type="text" class="search-box" id="searchBox" placeholder="Søk etter destinasjon...">
+<div class="list" id="destGrid"></div>
+<div id="mapContainer" style="display:none;"></div>
+<div class="legend" id="mapLegend" style="display:none;">
+  <span><span class="dot" style="background:#378ADD;"></span>2+ business hver vei</span>
+  <span><span class="dot" style="background:#EF9F27;"></span>Business én vei</span>
+  <span><span class="dot" style="background:#639922;"></span>Kun økonomi</span>
+</div>
+
+<h1>Kombinerte turer (fly inn ett sted, hjem fra et annet)</h1>
+<div class="list" id="openJawGrid"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<script>
+const DEST_VIEW = [];   // destination-centric, 4-10 night hub comparison
+const OPEN_JAW = [];
+const DESTINATION_NAMES_JS = {"AAL": "Aalborg", "ALC": "Alicante", "ALF": "Alta", "AMS": "Amsterdam", "AYT": "Antalya", "ATH": "Athen", "ATL": "Atlanta", "BCN": "Barcelona", "BRI": "Bari", "BER": "Berlin", "BIO": "Bilbao", "BLL": "Billund", "BHX": "Birmingham", "BOO": "Bodø", "BLQ": "Bologna", "BOD": "Bordeaux", "BOS": "Boston", "BRU": "Brussel", "BUD": "Budapest", "CAG": "Cagliari", "CTA": "Catania (Sicilia)", "CHQ": "Chania", "ORD": "Chicago", "DLM": "Dalaman", "DUB": "Dublin", "DUS": "Düsseldorf", "EDI": "Edinburgh", "FAO": "Faro", "FLR": "Firenze", "FRA": "Frankfurt", "FUE": "Fuerteventura", "FAE": "Færøyene", "GZP": "Gazipasa", "GDN": "Gdansk", "GVA": "Genève", "GOT": "Gøteborg", "HAM": "Hamburg", "HAJ": "Hannover", "EVE": "Harstad-Narvik", "HAU": "Haugesund", "HEL": "Helsinki", "HER": "Heraklion", "KKN": "Kirkenes", "KRN": "Kiruna", "KRK": "Krakow", "KRS": "Kristiansand", "KSU": "Kristiansund", "LCA": "Larnaca", "LPA": "Las Palmas", "LIS": "Lisboa", "LHR": "London", "LYR": "Longyearbyen", "LAX": "Los Angeles", "LLA": "Luleå", "LUX": "Luxembourg", "LYS": "Lyon", "FNC": "Madeira", "MAD": "Madrid", "AGP": "Malaga", "MLA": "Malta", "MAN": "Manchester", "RAK": "Marrakesh", "MRS": "Marseille", "MIA": "Miami", "MXP": "Milano", "LIN": "Milano", "BOM": "Mumbai", "MUC": "München", "NAP": "Napoli", "EWR": "New York", "JFK": "New York", "NCE": "Nice", "GOH": "Nuuk", "OLB": "Olbia", "PLQ": "Palanga", "PMO": "Palermo", "PMI": "Palma Mallorca", "CDG": "Paris", "PSA": "Pisa", "OPO": "Porto", "POZ": "Poznan", "PRG": "Prague", "PUY": "Pula", "KEF": "Reykjavík", "RHO": "Rhodos", "RIX": "Riga", "FCO": "Rom", "RVN": "Rovaniemi", "SZG": "Salzburg", "SFO": "San Francisco", "SEA": "Seattle", "ICN": "Seoul", "SVQ": "Sevilla", "SFT": "Skellefteå", "SPU": "Split", "SVG": "Stavanger", "STR": "Stuttgart", "SDL": "Sundsvall", "SCR": "Sälen/Trysil", "TLL": "Tallinn", "TLV": "Tel Aviv Yafo", "TFS": "Tenerife", "SKG": "Thessaloniki", "JTR": "Thira (Santorini)", "TIV": "Tivat", "HND": "Tokyo", "YYZ": "Toronto", "TOS": "Tromsø", "TRD": "Trondheim", "TKU": "Turku", "UME": "Umeå", "VAA": "Vasa", "VCE": "Venezia", "VNO": "Vilnius", "VBY": "Visby", "WAW": "Warsaw", "IAD": "Washington", "VIE": "Wien", "WRO": "Wroclaw", "ZRH": "Zürich", "AES": "Ålesund", "AAR": "Århus", "OSD": "Østersund/Åre", "AGA": "Agadir"};
+const HUB_NAMES_JS = {"OSL": "Oslo", "CPH": "København", "ARN": "Stockholm"};
+const MONTH_NO = ["", "jan", "feb", "mar", "apr", "mai", "jun", "jul", "aug", "sep", "okt", "nov", "des"];
+
+function formatDateNoYear(iso) {
+  const parts = iso.split("-");
+  return parseInt(parts[2], 10) + ". " + MONTH_NO[parseInt(parts[1], 10)];
+}
+
+function connectionBadge(conn, label) {
+  if (!conn) return "";
+  if (conn.status === "ok") {
+    const h = Math.floor(conn.bufferMinutes / 60), m = conn.bufferMinutes % 60;
+    return '<span class="badge best">' + label + ': god forbindelse (' + h + 't ' + m + 'm)</span>';
+  }
+  if (conn.status === "tight") {
+    const h = Math.floor(conn.bufferMinutes / 60), m = conn.bufferMinutes % 60;
+    return '<span class="badge feeder-warn">' + label + ': stram forbindelse (' + h + 't ' + m + 'm)</span>';
+  }
+  if (conn.status === "none") {
+    return '<span class="badge feeder-warn">' + label + ': ingen forbindelse samme dag — vurder overnatting</span>';
+  }
+  return '<span class="badge feeder-warn">' + label + ': sjekk manuelt (tider ikke hentet ennå)</span>';
+}
+
+function cabinLine(econ, prem, biz) {
+  let parts = [econ + ' øko'];
+  if (prem > 0) parts.push('<strong>' + prem + ' premium</strong>');
+  if (biz > 0) parts.push('<strong>' + biz + ' business</strong>');
+  return parts.join(' · ');
+}
+
+function pointsLine(points, businessSeats) {
+  if (!points) return '<span style="color:var(--muted);">poengpris ikke hentet ennå</span>';
+  const priceType = points.isStandard ? 'fast standardsats' : 'dynamisk pris, ca.';
+  const econStr = points.points.toLocaleString("no-NO").replace(/,/g, " ") + ' p økonomi (' + priceType + ')';
+  if (businessSeats > 0) {
+    // Confirmed EuroBonus mechanic (not a guess): with sufficient Fly
+    // Premium tier for this zone/cabin, Business/Premium costs the SAME
+    // points as Economy on the same route — not a fraction of the
+    // Business price. Source: SAS Mastercard Fly Premium benefit terms.
+    return econStr + ' · med Fly Premium: business koster likt som økonomiprisen over ('
+      + points.points.toLocaleString("no-NO").replace(/,/g, " ")
+      + ' p) — forutsatt riktig FP-nivå for denne sonen';
+  }
+  return econStr;
+}
+
+function renderTrip(t) {
+  const distFromTarget = Math.abs(t.nights - 7);
+  const badgeClass = distFromTarget === 0 ? "best" : "ok";
+  const badgeLabel = distFromTarget === 0 ? "7 netter" : t.nights + " netter";
+  return '<div class="trip">'
+    + '<div class="trip-dates">' + formatDateNoYear(t.outDate) + ' – ' + formatDateNoYear(t.inDate) + '</div>'
+    + '<div class="trip-weekdays">' + t.outWeekday + ' → ' + t.inWeekday + '</div>'
+    + '<div class="trip-meta">' + t.workdays + ' fridager fra jobb nødvendig</div>'
+    + '<span class="badge hub">' + (HUB_NAMES_JS[t.hub] || t.hub) + '</span>'
+    + '<span class="badge ' + badgeClass + '">' + badgeLabel + '</span>'
+    + connectionBadge(t.outConnection, "Ut") + connectionBadge(t.inConnection, "Hjem")
+    + '<div class="seats">Ut: ' + cabinLine(t.outEconomy, t.outPremium, t.outBusiness) + ' · ' + pointsLine(t.outPoints, t.outBusiness) + '</div>'
+    + '<div class="seats">Hjem: ' + cabinLine(t.inEconomy, t.inPremium, t.inBusiness) + ' · ' + pointsLine(t.inPoints, t.inBusiness) + '</div>'
+    + '</div>';
+}
+
+function renderOpenJawTrip(t) {
+  const distFromTarget = Math.abs(t.nights - 7);
+  const badgeClass = distFromTarget === 0 ? "best" : "ok";
+  const badgeLabel = distFromTarget === 0 ? "7 netter" : t.nights + " netter";
+  const outName = DESTINATION_NAMES_JS[t.outDestination] || t.outDestination;
+  const inName = DESTINATION_NAMES_JS[t.inDestination] || t.inDestination;
+  return '<div class="trip">'
+    + '<div class="trip-dates">Fly til ' + outName + ': ' + formatDateNoYear(t.outDate) + '</div>'
+    + '<div class="trip-weekdays">' + t.outWeekday + '</div>'
+    + '<div class="trip-dates">Hjem fra ' + inName + ': ' + formatDateNoYear(t.inDate) + '</div>'
+    + '<div class="trip-weekdays">' + t.inWeekday + '</div>'
+    + '<div class="trip-meta">' + t.workdays + ' fridager fra jobb nødvendig</div>'
+    + '<span class="badge hub">' + (HUB_NAMES_JS[t.hub] || t.hub) + '</span>'
+    + '<span class="badge ' + badgeClass + '">' + badgeLabel + '</span>'
+    + connectionBadge(t.outConnection, "Ut") + connectionBadge(t.inConnection, "Hjem")
+    + '<div class="seats">Ut: ' + cabinLine(t.outEconomy, t.outPremium, t.outBusiness)
+    + ' · Hjem: ' + cabinLine(t.inEconomy, t.inPremium, t.inBusiness) + '</div>'
+    + '</div>';
+}
+
+const CARRIER_NAMES = { SK: "SAS", KL: "KLM", AF: "Air France", DL: "Delta",
+  UX: "Air Europa", MU: "China Eastern", CI: "China Airlines", GA: "Garuda Indonesia",
+  KQ: "Kenya Airways", KE: "Korean Air", ME: "MEA", AR: "Aerolíneas Argentinas",
+  AM: "Aeroméxico", RO: "TAROM", VN: "Vietnam Airlines", MF: "Xiamen Airlines",
+  TP: "TAP Air Portugal" };
+
+function renderConfirmedOfferLine(o) {
+  const carrierName = CARRIER_NAMES[o.carrier] || o.carrier;
+  const dirLabel = o.direction === "outbound" ? "Ut" : "Hjem";
+  const stopsLabel = o.stops > 0 ? o.stops + " mellomlanding" : "direkte";
+  return '<div class="offer-line">' + dirLabel + ' ' + formatDateNoYear(o.date) + ' '
+    + o.departure + '–' + o.arrival + ' (' + stopsLabel + ') · ' + o.cabin
+    + ' · ' + o.points.toLocaleString("no-NO").replace(/,/g, " ") + ' p · '
+    + o.seats + ' seter · ' + carrierName + '</div>';
+}
+
+function renderConfirmedOffers(d) {
+  if (!d.confirmedOffers) return "";
+  const sas = d.confirmedOffers.sas || [];
+  const partner = d.confirmedOffers.partner || [];
+  if (sas.length === 0 && partner.length === 0) return "";
+  let html = '<div class="confirmed-block"><h3>Bekreftet (ekte pris og tid)</h3>';
+  if (sas.length) {
+    html += '<div class="confirmed-group"><strong>SAS</strong>' + sas.map(renderConfirmedOfferLine).join("") + '</div>';
+  }
+  if (partner.length) {
+    html += '<div class="confirmed-group"><strong>Partnerselskap</strong>' + partner.map(renderConfirmedOfferLine).join("") + '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderDestinationCard(d) {
+  const name = DESTINATION_NAMES_JS[d.destination] || d.destination;
+  const summaryLine = d.bestSummary
+    ? '<div class="dest-summary-line">Best: ' + d.bestSummary.nights + ' netter fra '
+      + (HUB_NAMES_JS[d.bestSummary.hub] || d.bestSummary.hub)
+      + (d.bestSummary.biz > 0 ? ' · ' + d.bestSummary.biz + ' business-seter totalt' : '') + '</div>'
+    : '<div class="dest-summary-line" style="color:var(--muted);">Ingen 5–10 netters kombinasjon funnet ennå</div>';
+
+  let hubsHtml = "";
+  HUB_ORDER.forEach(hub => {
+    const trips = d.hubs[hub];
+    if (!trips || trips.length === 0) return;
+    hubsHtml += '<div class="hub-block"><h3>Fra ' + (HUB_NAMES_JS[hub] || hub) + '</h3>'
+      + trips.map(renderTrip).join("") + '</div>';
+  });
+  if (!hubsHtml) hubsHtml = '<div class="none">Ingen 5–10 netters alternativ funnet fra noen hub ennå.</div>';
+
+  return '<details class="dest-card" data-name="' + name.toLowerCase() + '" data-code="' + d.destination + '">'
+    + '<summary><h2>' + name + '</h2>'
+    + '<div class="season">' + (d.season || "") + '</div>'
+    + summaryLine + '</summary>'
+    + renderConfirmedOffers(d)
+    + hubsHtml
+    + '</details>';
+}
+
+const HUB_ORDER = ["OSL", "CPH", "ARN"];
+const MARKER_COLOR = { blue: "#378ADD", orange: "#EF9F27", green: "#639922" };
+
+function openDestination(code) {
+  document.getElementById("viewToggleList").click();
+  requestAnimationFrame(() => {
+    const el = document.querySelector('#destGrid details[data-code="' + code + '"]');
+    if (!el) return;
+    el.open = true;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
+function renderMap() {
+  const container = document.getElementById("mapContainer");
+  container.innerHTML = "";
+  const svg = d3.select(container).append("svg").attr("viewBox", "0 0 680 420").attr("width", "100%");
+  const projection = d3.geoNaturalEarth1().center([15, 35]).scale(420).translate([340, 220]);
+  const path = d3.geoPath(projection);
+  const isDark = (document.documentElement.dataset.mode || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark";
+
+  d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json").then(world => {
+    svg.selectAll("path").data(topojson.feature(world, world.objects.countries).features).join("path")
+      .attr("d", path)
+      .attr("fill", isDark ? "#2c2c2a" : "#e1e0d9")
+      .attr("stroke", isDark ? "#1a1a19" : "#fcfcfb")
+      .attr("stroke-width", 0.5);
+
+    const points = DEST_VIEW.filter(d => d.lon !== null && d.lat !== null);
+    svg.selectAll("circle").data(points).join("circle")
+      .attr("cx", d => projection([d.lon, d.lat])[0])
+      .attr("cy", d => projection([d.lon, d.lat])[1])
+      .attr("r", 5)
+      .attr("fill", d => MARKER_COLOR[d.marker] || "#898781")
+      .attr("stroke", isDark ? "#1a1a19" : "#fcfcfb")
+      .attr("stroke-width", 1.2)
+      .style("cursor", "pointer")
+      .on("click", (event, d) => openDestination(d.destination));
+  });
+}
+
+function render() {
+  const destGrid = document.getElementById("destGrid");
+  destGrid.innerHTML = DEST_VIEW.length
+    ? DEST_VIEW.map(renderDestinationCard).join("")
+    : '<div class="none">Ingen destinasjoner funnet ennå.</div>';
+
+  document.getElementById("searchBox").addEventListener("input", (e) => {
+    const q = e.target.value.toLowerCase().trim();
+    document.querySelectorAll("#destGrid details.dest-card").forEach(el => {
+      el.style.display = el.dataset.name.includes(q) ? "" : "none";
+    });
+  });
+
+  const listBtn = document.getElementById("viewToggleList");
+  const mapBtn = document.getElementById("viewToggleMap");
+  const destGridEl = document.getElementById("destGrid");
+  const searchBoxEl = document.getElementById("searchBox");
+  const mapContainerEl = document.getElementById("mapContainer");
+  const mapLegendEl = document.getElementById("mapLegend");
+  let mapRendered = false;
+
+  listBtn.addEventListener("click", () => {
+    listBtn.classList.add("active"); mapBtn.classList.remove("active");
+    destGridEl.style.display = ""; searchBoxEl.style.display = "";
+    mapContainerEl.style.display = "none"; mapLegendEl.style.display = "none";
+  });
+  mapBtn.addEventListener("click", () => {
+    mapBtn.classList.add("active"); listBtn.classList.remove("active");
+    destGridEl.style.display = "none"; searchBoxEl.style.display = "none";
+    mapContainerEl.style.display = ""; mapLegendEl.style.display = "flex";
+    if (!mapRendered) { renderMap(); mapRendered = true; }
+  });
+
+  const ojGrid = document.getElementById("openJawGrid");
+  ojGrid.innerHTML = OPEN_JAW.length === 0
+    ? '<div class="none">Ingen kombinasjoner funnet ennå.</div>'
+    : "";
+  OPEN_JAW.forEach(g => {
+    const card = document.createElement("div");
+    card.className = "card";
+    const tripsHtml = g.trips.length
+      ? g.trips.map(renderOpenJawTrip).join("")
+      : '<div class="none">Ingen kombinasjoner i riktig lengde ennå.</div>';
+    card.innerHTML = '<h2>' + g.group + '</h2>' + tripsHtml;
+    ojGrid.appendChild(card);
+  });
+}
+
+render();
+</script>
+</body>
+</html>
