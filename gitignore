@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Lokale miljøvariabler (hvis du noen gang lager en for lokal testing)
+.env
+.env.local
+
+# Editor/OS-støy
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Ikke ignorer sas_availability.db — den SKAL committes,
+# det er sånn dashboardet oppdateres daglig via GitHub Actions.
